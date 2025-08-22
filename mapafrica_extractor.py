@@ -1,21 +1,43 @@
 #!/usr/bin/env python3
 """
-MapAfrica Project Extractor - Enhanced version to handle Cloudflare protection
-Extracts project information from MapAfrica project pages
+MapAfrica Project Extractor - Original version using requests.
+
+This tool extracts project information from MapAfrica project pages using
+HTTP requests. Note: This version is limited by Cloudflare protection.
+
+Author: Francesca Fadel
+Repository: https://github.com/francescafadel/AfDB_Links.git
 """
 
 import csv
 import logging
-import random
 import time
+import random
 from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 import argparse
 
+
 class MapAfricaExtractor:
-    def __init__(self, base_url: str = "https://mapafrica.afdb.org", rate_limit: float = 2.0, timeout: int = 30):
+    """
+    Extracts project information from MapAfrica project pages using requests.
+    
+    Note: This version is limited by Cloudflare protection and may not work
+    for all projects due to bot detection.
+    """
+    
+    def __init__(self, base_url: str = "https://mapafrica.afdb.org", 
+                 rate_limit: float = 1.0, timeout: int = 30):
+        """
+        Initialize the MapAfrica extractor.
+        
+        Args:
+            base_url: Base URL for MapAfrica platform
+            rate_limit: Delay between requests in seconds
+            timeout: Request timeout in seconds
+        """
         self.base_url = base_url.rstrip('/')
         self.rate_limit = rate_limit
         self.timeout = timeout
@@ -23,180 +45,161 @@ class MapAfricaExtractor:
         # Target sections to extract (English and French)
         self.target_sections = {
             'general_description': [
-                'Project General Description', 'General Description', 'Description générale du projet',
-                'Project Description', 'Description du projet'
+                'Project General Description',
+                'General Description', 
+                'Description générale du projet'
             ],
             'objectives': [
-                'Project Objectives', 'Objectives', 'Objectifs du projet', 'Objectifs'
+                'Project Objectives',
+                'Objectifs du projet'
             ],
             'beneficiaries': [
-                'Beneficiaries', 'Bénéficiaires', 'Target Beneficiaries', 'Bénéficiaires cibles'
+                'Beneficiaries',
+                'Bénéficiaires'
             ]
         }
         
-        # Rotating user agents to appear more like real browsers
-        self.user_agents = [
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
-        
         self.session = self._create_session()
-        self._setup_logging()
+        self.logger = self._setup_logging()
     
-    def _setup_logging(self):
-        """Setup logging configuration"""
+    def _setup_logging(self) -> logging.Logger:
+        """Set up logging configuration."""
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler('mapafrica_extractor.log')
-            ]
+            format='%(asctime)s - %(levelname)s - %(message)s'
         )
-        self.logger = logging.getLogger(__name__)
+        return logging.getLogger(__name__)
     
     def _create_session(self) -> requests.Session:
-        """Create a session with enhanced anti-detection capabilities"""
+        """Create and configure requests session with retry logic."""
         session = requests.Session()
         
         # Configure retry strategy
-        from urllib3.util.retry import Retry
-        from requests.adapters import HTTPAdapter
-        
-        retry_strategy = Retry(
+        retry_strategy = requests.adapters.Retry(
             total=3,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[429, 500, 502, 503, 504]
         )
         
-        adapter = HTTPAdapter(max_retries=retry_strategy)
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         
-        # Set a random user agent
+        # Set headers to mimic browser
         session.headers.update({
-            'User-Agent': random.choice(self.user_agents),
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
+            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0'
+            'Upgrade-Insecure-Requests': '1'
         })
         
         return session
     
-    def _rotate_user_agent(self):
-        """Rotate to a different user agent"""
-        new_agent = random.choice(self.user_agents)
-        self.session.headers.update({'User-Agent': new_agent})
-        self.logger.debug(f"Rotated to user agent: {new_agent[:50]}...")
-    
     def _make_request(self, url: str) -> Optional[requests.Response]:
-        """Make a request with enhanced anti-detection"""
+        """
+        Make HTTP request with error handling.
+        
+        Args:
+            url: URL to request
+            
+        Returns:
+            Response object or None if failed
+        """
         try:
-            # Rotate user agent occasionally
-            if random.random() < 0.3:
-                self._rotate_user_agent()
-            
-            # Add some randomization to the request
-            headers = self.session.headers.copy()
-            headers.update({
-                'Referer': self.base_url,
-                'X-Requested-With': 'XMLHttpRequest'
-            })
-            
-            response = self.session.get(
-                url, 
-                headers=headers,
-                timeout=self.timeout,
-                allow_redirects=True
-            )
-            
-            # Check if we got blocked
-            if response.status_code == 403:
-                self.logger.warning(f"403 Forbidden - likely blocked by Cloudflare for {url}")
-                return None
-            elif response.status_code == 429:
-                self.logger.warning(f"429 Too Many Requests - rate limited for {url}")
-                time.sleep(self.rate_limit * 2)  # Wait longer
-                return None
-            elif response.status_code != 200:
-                self.logger.error(f"HTTP {response.status_code} for {url}")
-                return None
-            
+            response = self.session.get(url, timeout=self.timeout)
+            response.raise_for_status()
             return response
-            
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Request failed for {url}: {e}")
             return None
     
     def _get_soup(self, url: str) -> Optional[BeautifulSoup]:
-        """Get BeautifulSoup object from URL"""
-        response = self._make_request(url)
-        if not response:
-            return None
+        """
+        Get BeautifulSoup object from URL.
         
-        try:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            return soup
-        except Exception as e:
-            self.logger.error(f"Failed to parse HTML for {url}: {e}")
-            return None
+        Args:
+            url: URL to fetch
+            
+        Returns:
+            BeautifulSoup object or None if failed
+        """
+        response = self._make_request(url)
+        if response:
+            return BeautifulSoup(response.content, 'html.parser')
+        return None
     
     def _construct_project_url(self, identifier: str) -> str:
-        """Construct potential MapAfrica project URLs"""
-        # Try different URL patterns
-        patterns = [
-            f"{self.base_url}/project/{identifier}",
-            f"{self.base_url}/projects/{identifier}",
-            f"{self.base_url}/en/project/{identifier}",
-            f"{self.base_url}/fr/project/{identifier}"
-        ]
-        return patterns[0]  # Start with the most likely pattern
-    
-    def _find_section_content(self, soup: BeautifulSoup, section_names: List[str]) -> tuple:
-        """Find section content by heading names"""
-        content = ""
-        locale_notes = []
+        """
+        Construct the MapAfrica project URL using the correct pattern.
         
-        # Look for h2 and h3 headings
-        for heading_level in ['h2', 'h3']:
-            headings = soup.find_all(heading_level)
+        Args:
+            identifier: Project identifier (e.g., P-ZW-AAG-008)
             
-            for heading in headings:
-                heading_text = heading.get_text(strip=True).lower()
-                
-                # Check if this heading matches any of our target sections
-                for section_name in section_names:
-                    if section_name.lower() in heading_text:
-                        # Extract content until next heading of same level
-                        section_content = self._extract_content_until_next_heading(heading, heading_level)
-                        if section_content:
-                            content = section_content
-                            # Detect if French locale is used
-                            if any(fr_name.lower() in heading_text for fr_name in ['générale', 'objectifs', 'bénéficiaires']):
-                                locale_notes.append("fr locale detected")
-                            break
-                
-                if content:
-                    break
+        Returns:
+            Complete project URL
+        """
+        return f"{self.base_url}/en/projects/46002-{identifier}"
+    
+    def _find_section_content(self, soup: BeautifulSoup, section_names: List[str]) -> str:
+        """
+        Find and extract content for a specific section.
+        
+        Args:
+            soup: BeautifulSoup object of the page
+            section_names: List of possible section names to search for
+            
+        Returns:
+            Extracted text content for the section
+        """
+        content = []
+        
+        # Try to find section by heading
+        for section_name in section_names:
+            # Look for h2 and h3 headings
+            for heading in soup.find_all(['h2', 'h3']):
+                if heading.get_text(strip=True).lower() == section_name.lower():
+                    heading_level = heading.name
+                    
+                    # Extract content until next heading of same level
+                    section_content = self._extract_content_until_next_heading(
+                        heading, heading_level
+                    )
+                    
+                    if section_content:
+                        content.append(section_content)
+                        break
             
             if content:
                 break
         
-        return content, locale_notes
+        # If no content found, try alternative approaches
+        if not content:
+            # Look for content in divs with similar text
+            for section_name in section_names:
+                for div in soup.find_all('div'):
+                    if section_name.lower() in div.get_text().lower():
+                        text = div.get_text(strip=True)
+                        if len(text) > 50:  # Only if substantial content
+                            content.append(text)
+                            break
+                if content:
+                    break
+        
+        return ' '.join(content).strip()
     
     def _extract_content_until_next_heading(self, heading, heading_level: str) -> str:
-        """Extract content from heading until next heading of same level"""
+        """
+        Extract content from a heading until the next heading of the same level.
+        
+        Args:
+            heading: BeautifulSoup heading element
+            heading_level: Level of the heading (h2, h3, etc.)
+            
+        Returns:
+            Extracted text content
+        """
         content_parts = []
         current = heading.find_next_sibling()
         
@@ -215,72 +218,94 @@ class MapAfricaExtractor:
         return ' '.join(content_parts)
     
     def _extract_project_info(self, project_url: str) -> Dict:
-        """Extract project information from the project page"""
-        soup = self._get_soup(project_url)
+        """
+        Extract project information from a project page.
         
-        if not soup:
+        Args:
+            project_url: URL of the project page
+            
+        Returns:
+            Dictionary containing extracted information
+        """
+        try:
+            # Get page content
+            soup = self._get_soup(project_url)
+            if not soup:
+                return {
+                    'project_url': project_url,
+                    'general_description': '',
+                    'objectives': '',
+                    'beneficiaries': '',
+                    'status': 'not_found',
+                    'notes': 'failed to fetch page'
+                }
+            
+            # Extract each section
+            general_description = self._find_section_content(
+                soup, self.target_sections['general_description']
+            )
+            objectives = self._find_section_content(
+                soup, self.target_sections['objectives']
+            )
+            beneficiaries = self._find_section_content(
+                soup, self.target_sections['beneficiaries']
+            )
+            
+            # Determine status and notes
+            if general_description or objectives or beneficiaries:
+                status = 'ok'
+                notes = 'sections extracted successfully'
+            else:
+                status = 'not_found'
+                notes = 'no sections found'
+            
+            return {
+                'project_url': project_url,
+                'general_description': general_description,
+                'objectives': objectives,
+                'beneficiaries': beneficiaries,
+                'status': status,
+                'notes': notes
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting project info from {project_url}: {e}")
             return {
                 'project_url': project_url,
                 'general_description': '',
                 'objectives': '',
                 'beneficiaries': '',
-                'status': 'not_found',
-                'notes': 'failed to fetch page'
+                'status': 'error',
+                'notes': f'extraction error: {str(e)}'
             }
-        
-        # Extract each section
-        general_desc, desc_notes = self._find_section_content(soup, self.target_sections['general_description'])
-        objectives, obj_notes = self._find_section_content(soup, self.target_sections['objectives'])
-        beneficiaries, ben_notes = self._find_section_content(soup, self.target_sections['beneficiaries'])
-        
-        # Combine notes
-        all_notes = desc_notes + obj_notes + ben_notes
-        notes = '; '.join(all_notes) if all_notes else ''
-        
-        # Determine status
-        if general_desc or objectives or beneficiaries:
-            status = 'ok'
-            if not notes:
-                notes = 'sections extracted successfully'
-        else:
-            status = 'no_content'
-            notes = 'no target sections found' if not notes else notes
-        
-        return {
-            'project_url': project_url,
-            'general_description': general_desc,
-            'objectives': objectives,
-            'beneficiaries': beneficiaries,
-            'status': status,
-            'notes': notes
-        }
     
-    def process_csv(self, input_file: str, output_file: str, id_column: str = 'Identifier', max_rows: int = None) -> None:
-        """Process CSV file and extract project information"""
-        self.logger.info(f"Processing CSV: {input_file}")
-        self.logger.info(f"ID column: {id_column}")
-        self.logger.info(f"Output file: {output_file}")
-        if max_rows:
-            self.logger.info(f"Processing first {max_rows} rows only")
+    def process_csv(self, input_file: str, output_file: str, 
+                   id_column: str = 'Identifier') -> None:
+        """
+        Process a CSV file containing project identifiers.
         
-        results = []
-        row_count = 0
-        
+        Args:
+            input_file: Path to input CSV file
+            output_file: Path to output CSV file
+            id_column: Name of the column containing project identifiers
+        """
         try:
-            with open(input_file, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
+            results = []
+            
+            # Read input CSV
+            with open(input_file, 'r', encoding='utf-8') as infile:
+                reader = csv.DictReader(infile)
                 
                 # Validate ID column exists
                 if id_column not in reader.fieldnames:
-                    available_columns = ', '.join(reader.fieldnames) if reader.fieldnames else 'none'
-                    raise ValueError(f"Column '{id_column}' not found in CSV. Available columns: {available_columns}")
+                    raise ValueError(f"Column '{id_column}' not found in CSV. Available columns: {reader.fieldnames}")
                 
+                # Process each row
                 for row_num, row in enumerate(reader, 1):
-                    if max_rows and row_count >= max_rows:
-                        break
-                    
                     identifier = row[id_column].strip()
+                    
                     if not identifier:
+                        self.logger.warning(f"Row {row_num}: Empty identifier, skipping")
                         continue
                     
                     self.logger.info(f"Processing row {row_num}: {identifier}")
@@ -290,82 +315,117 @@ class MapAfricaExtractor:
                     
                     # Extract project information
                     project_info = self._extract_project_info(project_url)
+                    project_info['Identifier'] = identifier
                     
-                    # Add identifier to result
-                    result = {
-                        'Identifier': identifier,
-                        **project_info
-                    }
+                    results.append(project_info)
                     
-                    results.append(result)
-                    row_count += 1
-                    
-                    # Log status
-                    status = project_info['status']
-                    notes = project_info['notes']
-                    self.logger.info(f"Row {row_num}: {status} - {notes}")
+                    # Log result
+                    self.logger.info(f"Row {row_num}: {project_info['status']} - {project_info['notes']}")
                     
                     # Rate limiting
-                    if max_rows and row_count < max_rows:
-                        time.sleep(self.rate_limit)
+                    time.sleep(self.rate_limit)
             
-            # Write results
+            # Write output CSV
             self._write_output_csv(results, output_file)
             
-            self.logger.info(f"Output written to: {output_file}")
             self.logger.info(f"Processing completed. Processed {len(results)} projects.")
-            self.logger.info(f"Results saved to: {output_file}")
             
         except Exception as e:
             self.logger.error(f"Error processing CSV: {e}")
             raise
     
     def _write_output_csv(self, results: List[Dict], output_file: str) -> None:
-        """Write results to CSV file"""
-        if not results:
-            return
+        """
+        Write results to output CSV file.
         
-        fieldnames = ['Identifier', 'project_url', 'general_description', 'objectives', 'beneficiaries', 'status', 'notes']
+        Args:
+            results: List of dictionaries containing project information
+            output_file: Path to output CSV file
+        """
+        fieldnames = [
+            'Identifier', 'project_url', 'general_description', 
+            'objectives', 'beneficiaries', 'status', 'notes'
+        ]
         
-        with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        with open(output_file, 'w', newline='', encoding='utf-8') as outfile:
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(results)
+        
+        self.logger.info(f"Results saved to: {output_file}")
+
 
 def main():
-    parser = argparse.ArgumentParser(description='Extract project information from MapAfrica')
-    parser.add_argument('--projects', required=True, help='Input CSV file with project identifiers')
-    parser.add_argument('--id-col', default='Identifier', help='Column name containing project identifiers (default: Identifier)')
-    parser.add_argument('--out', default='mapafrica_output.csv', help='Output CSV file (default: mapafrica_output.csv)')
-    parser.add_argument('--rate-limit', type=float, default=2.0, help='Rate limit in seconds between requests (default: 2.0)')
-    parser.add_argument('--timeout', type=int, default=30, help='Request timeout in seconds (default: 30)')
-    parser.add_argument('--base-url', default='https://mapafrica.afdb.org', help='Base URL for MapAfrica (default: https://mapafrica.afdb.org)')
-    parser.add_argument('--max-rows', type=int, help='Maximum number of rows to process (for testing)')
+    """Main function to handle command line arguments and run the extractor."""
+    parser = argparse.ArgumentParser(
+        description='Extract project information from MapAfrica using requests'
+    )
+    
+    parser.add_argument(
+        '--projects', 
+        required=True,
+        help='Path to input CSV file containing project identifiers'
+    )
+    
+    parser.add_argument(
+        '--id-col', 
+        default='Identifier',
+        help='Name of the column containing project identifiers (default: Identifier)'
+    )
+    
+    parser.add_argument(
+        '--out', 
+        default='mapafrica_output.csv',
+        help='Output CSV file path (default: mapafrica_output.csv)'
+    )
+    
+    parser.add_argument(
+        '--rate-limit', 
+        type=float, 
+        default=1.0,
+        help='Delay between requests in seconds (default: 1.0)'
+    )
+    
+    parser.add_argument(
+        '--timeout', 
+        type=int, 
+        default=30,
+        help='Request timeout in seconds (default: 30)'
+    )
+    
+    parser.add_argument(
+        '--base-url', 
+        default='https://mapafrica.afdb.org',
+        help='Base URL for MapAfrica (default: https://mapafrica.afdb.org)'
+    )
     
     args = parser.parse_args()
     
-    # Validate input file
-    if not args.projects:
-        print("Error: --projects argument is required")
-        return
+    # Validate input file exists
+    try:
+        with open(args.projects, 'r') as f:
+            pass
+    except FileNotFoundError:
+        print(f"Error: Input file '{args.projects}' not found")
+        exit(1)
+    
+    # Create extractor and process
+    extractor = MapAfricaExtractor(
+        base_url=args.base_url,
+        rate_limit=args.rate_limit,
+        timeout=args.timeout
+    )
     
     try:
-        extractor = MapAfricaExtractor(
-            base_url=args.base_url,
-            rate_limit=args.rate_limit,
-            timeout=args.timeout
-        )
-        
         extractor.process_csv(
             input_file=args.projects,
             output_file=args.out,
-            id_column=args.id_col,
-            max_rows=args.max_rows
+            id_column=args.id_col
         )
-        
     except Exception as e:
         print(f"Error: {e}")
-        return
+        exit(1)
+
 
 if __name__ == "__main__":
     main()

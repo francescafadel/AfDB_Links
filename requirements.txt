@@ -1,4 +1,12 @@
+# Core web scraping dependencies
 requests>=2.28.0
 beautifulsoup4>=4.11.0
 lxml>=4.9.0
 urllib3>=1.26.0
+
+# Selenium for browser automation (for Cloudflare bypass)
+selenium>=4.0.0
+
+# Additional utilities
+argparse  # Built-in with Python 3.2+
+typing    # Built-in with Python 3.5+
