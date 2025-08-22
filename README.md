@@ -15,6 +15,7 @@ Successfully extracted **1,107 out of 1,109 projects** (99.8% success rate) from
 - **`mapafrica_selenium_extractor.py`** - Main extraction tool using Selenium to bypass Cloudflare
 - **`mapafrica_extractor.py`** - Original requests-based extractor (limited by Cloudflare)
 - **`afdb_harvester.py`** - AfDB documents harvester (limited by Cloudflare)
+- **`clean_csv.py`** - Utility to clean input CSV files
 
 ### Data Files
 - **`afdb_full_extraction.csv`** - Complete extracted dataset (1,107 projects)
